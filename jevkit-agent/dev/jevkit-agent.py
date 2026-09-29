@@ -365,6 +365,10 @@ def candidate_output_encodings():
                     pass
         except Exception:
             pass
+    # 增加跨平台通用兜底（在英文/云端 CI 虚拟机的 Windows 下也能正确解码 GBK 与中文文件）
+    for fallback_enc in ("gbk", "gb18030", "cp936"):
+        if fallback_enc not in names:
+            names.append(fallback_enc)
     out = []
     for name in names:
         if name and name not in out:
