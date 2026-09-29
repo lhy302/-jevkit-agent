@@ -13,6 +13,13 @@ jobs:
   build-and-release:
     runs-on: windows-latest
 
+    env:
+      PYTHONIOENCODING: "utf-8"
+
+    defaults:
+      run:
+        shell: pwsh
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -39,7 +46,6 @@ jobs:
         python -m PyInstaller --noconfirm --clean --distpath ../dist --workpath ../build jevkit-agent.spec
 
     - name: Package Release Assets
-      shell: pwsh
       run: |
         New-Item -ItemType Directory -Path release-pkg
         Copy-Item jevkit-agent\dist\jevkit-agent.exe release-pkg\
@@ -49,7 +55,6 @@ jobs:
         Copy-Item jevkit-agent\README.md release-pkg\
         Copy-Item LICENSE release-pkg\
 
-        # 创建启动脚本
         @"
         @echo off
         start "" "%~dp0jevkit-agent.exe"

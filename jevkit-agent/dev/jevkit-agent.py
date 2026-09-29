@@ -2324,6 +2324,8 @@ def capture_screenshot(save_path=None):
     try:
         w = user32.GetSystemMetrics(0)
         h = user32.GetSystemMetrics(1)
+        if w <= 0 or h <= 0:
+            w, h = 1024, 768
         hdc_screen = user32.GetDC(None)
         hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
         hbm = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
@@ -2349,7 +2351,7 @@ def capture_screenshot(save_path=None):
 
         if not save_path:
             save_path = os.path.join(
-                tempfile.gettempdir(), "dsh_screenshot_%d.png" % int(time.time() * 1000)
+                tempfile.gettempdir(), "jevkit_screenshot_%d.png" % int(time.time() * 1000)
             )
         save_path = os.path.abspath(save_path)
 

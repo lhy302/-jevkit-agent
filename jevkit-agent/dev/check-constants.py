@@ -13,6 +13,12 @@ import os
 import re
 import sys
 
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 def analyze(path):
     with open(path, "r", encoding="utf-8") as handle:
