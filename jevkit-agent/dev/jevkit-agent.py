@@ -345,11 +345,12 @@ def _codepage_name(cp):
 
 
 def candidate_output_encodings():
-    """PowerShell / cmd / 老式程序在 Windows 上可能输出不同编码，这里给出候选列表。"""
-    names = ["utf-8"]
+    """PowerShell / cmd / 老式程序在 Windows 上可能输出不同编码，这里给出候选列表。
+    多字节 CJK 编码排在单字节 ANSI 编码之前，避免在非中文 Windows 虚拟环境下发生单字节误判。"""
+    names = ["utf-8", "gb18030", "gbk", "cp936"]
     try:
         pref = locale.getpreferredencoding(False)
-        if pref:
+        if pref and pref.lower() not in ("utf-8", "utf8", "gbk", "gb18030", "cp936"):
             names.append(pref)
     except Exception:
         pass
@@ -359,16 +360,12 @@ def candidate_output_encodings():
             for getter in (ctypes.windll.kernel32.GetACP, ctypes.windll.kernel32.GetOEMCP):
                 try:
                     name = _codepage_name(getter())
-                    if name:
+                    if name and name not in names:
                         names.append(name)
                 except Exception:
                     pass
         except Exception:
             pass
-    # 增加跨平台通用兜底（在英文/云端 CI 虚拟机的 Windows 下也能正确解码 GBK 与中文文件）
-    for fallback_enc in ("gbk", "gb18030", "cp936"):
-        if fallback_enc not in names:
-            names.append(fallback_enc)
     out = []
     for name in names:
         if name and name not in out:
@@ -379,8 +376,7 @@ def candidate_output_encodings():
 def decode_output(data, forced_encoding=None):
     """把子进程输出字节解码成文本。
 
-    策略：优先 UTF-8；失败则在本机 ANSI/OEM 代码页中挑替换字符最少的一个。
-    这样可以同时正确显示 PowerShell(UTF-8)、cmd(控制台代码页)、Python(cp936) 的输出。
+    策略：优先 UTF-8；其次严格尝试多字节 GBK/GB18030；失败则在其余代码页中打分。
     """
     if forced_encoding and forced_encoding != "auto":
         try:
@@ -391,6 +387,11 @@ def decode_output(data, forced_encoding=None):
         return data.decode("utf-8")
     except UnicodeDecodeError:
         pass
+    for cjk_name in ("gb18030", "gbk", "cp936"):
+        try:
+            return data.decode(cjk_name)
+        except (UnicodeDecodeError, LookupError):
+            pass
     best_text, best_score = None, None
     for name in candidate_output_encodings()[1:]:
         try:
