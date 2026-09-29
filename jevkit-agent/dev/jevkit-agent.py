@@ -3019,8 +3019,9 @@ class RouterEngine(object):
 
     def __init__(self, tables_dir=None, jev_client=None, config=None):
         cfg_dir = (config or {}).get("tables_dir") if config else None
-        self.tables_dir = tables_dir or cfg_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tables")
-        if not os.path.isdir(self.tables_dir):
+        configured_dir = tables_dir or cfg_dir
+        self.tables_dir = configured_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tables")
+        if not configured_dir and not os.path.isdir(self.tables_dir):
             cwd_tables = os.path.join(os.getcwd(), "tables")
             if os.path.isdir(cwd_tables):
                 self.tables_dir = cwd_tables
@@ -6027,16 +6028,29 @@ def run_selftest():
             "target_language": "rust",
             "nodes": {"/rust/function/define": {"type": "leaf", "template": "fn {func_name}() {"}}
         })
-        imp_res = json.loads(run_jevagent_tool({
-            "action": "import_table",
-            "table_content": custom_tbl_content
-        }, {"tables_dir": os.path.join(temp_dir, "tables")}))
-        check("导入外部树表功能：成功导入并热注册外部自定义树表", imp_res.get("status") == "success" and imp_res.get("target_language") == "rust", str(imp_res))
-
-        list_tbl_res = json.loads(run_jevagent_tool({
-            "action": "list_tables"
-        }, {"tables_dir": os.path.join(temp_dir, "tables")}))
-        check("列出树表功能：成功获取已加载树表列表", list_tbl_res.get("status") == "success" and len(list_tbl_res.get("tables", [])) >= 3, str(list_tbl_res))
+        custom_tables_dir = os.path.join(temp_dir, "custom-tables")
+        fallback_root = os.path.join(temp_dir, "fallback")
+        os.makedirs(os.path.join(fallback_root, "tables"))
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(fallback_root)
+            imp_res = json.loads(run_jevagent_tool({
+                "action": "import_table",
+                "table_content": custom_tbl_content
+            }, {"tables_dir": custom_tables_dir}))
+            list_tbl_res = json.loads(run_jevagent_tool({
+                "action": "list_tables"
+            }, {"tables_dir": custom_tables_dir}))
+        finally:
+            os.chdir(original_cwd)
+        expected_table_path = os.path.join(custom_tables_dir, "rust_v1.json")
+        check("导入外部树表功能：写入显式配置的目录而非回退目录",
+              imp_res.get("status") == "success" and imp_res.get("target_language") == "rust"
+              and imp_res.get("saved_path") == expected_table_path and os.path.isfile(expected_table_path)
+              and not os.path.exists(os.path.join(fallback_root, "tables", "rust_v1.json")), str(imp_res))
+        check("列出树表功能：从显式配置的目录加载新树表",
+              list_tbl_res.get("tables_dir") == custom_tables_dir
+              and any(item.get("table_or_lang") == "rust" for item in list_tbl_res.get("tables", [])), str(list_tbl_res))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
