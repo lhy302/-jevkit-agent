@@ -1933,7 +1933,11 @@ class TextFile(object):
         text = _restore_eol(normalized_text, self.eol)
         data = text.encode(self.encoding, "replace")
         if self.bom:
-            data = b"\xef\xbb\xbf" + data if self.encoding == "utf-8" else data
+            data = {
+                "utf-8": b"\xef\xbb\xbf",
+                "utf-16-le": b"\xff\xfe",
+                "utf-16-be": b"\xfe\xff",
+            }[self.encoding] + data
         with open(self.path, "wb") as handle:
             handle.write(data)
 
@@ -5451,6 +5455,20 @@ def run_selftest():
         with open(crlf, "rb") as handle:
             raw = handle.read()
         check("editor 保留 CRLF 换行", raw == "a\r\nB\r\nc\r\n".encode("utf-8"), repr(raw))
+
+        for label, encoding, bom in (("LE", "utf-16-le", b"\xff\xfe"),
+                                     ("BE", "utf-16-be", b"\xfe\xff")):
+            utf16_path = os.path.join(temp_dir, "utf16-%s.txt" % label.lower())
+            with open(utf16_path, "wb") as handle:
+                handle.write(bom + "第一行\r\n第二行\r\n".encode(encoding))
+            run_editor_tool({"command": "str_replace", "path": utf16_path,
+                             "old_str": "第二行", "new_str": "第二行-改"}, 16000)
+            with open(utf16_path, "rb") as handle:
+                utf16_raw = handle.read()
+            expected_raw = bom + "第一行\r\n第二行-改\r\n".encode(encoding)
+            check("editor 保留 UTF-16 %s BOM 并可再次读取" % label,
+                  utf16_raw == expected_raw and TextFile(utf16_path).normalized == "第一行\n第二行-改\n",
+                  repr(utf16_raw[:24]))
 
         gbk = os.path.join(temp_dir, "gbk.txt")
         with open(gbk, "wb") as handle:
