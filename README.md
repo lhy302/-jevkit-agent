@@ -5,7 +5,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Platform: Windows 10 | 11](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg)
 ![Python: 3.8 ~ 3.14+](https://img.shields.io/badge/Python-3.8%20~%203.14%2B-3776AB.svg)
-![Tests: 125 Passed](https://img.shields.io/badge/Tests-125%20Passed-brightgreen.svg)
+![Tests: 127 Passed](https://img.shields.io/badge/Tests-127%20Passed-brightgreen.svg)
 ![Architecture: Dual--API](https://img.shields.io/badge/Architecture-Dual--API%20Isolated-orange.svg)
 
 **单文件 · 零依赖 · 纯 Win32 原生图形界面 · 具备全自主操作系统能力 · 双 API 隔离架构 · 驱动 JevAgent 三文件模型编程系统**
