@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "skeleton_id": "common_skeleton_v1",
+  "root": {
+    "type": "branch",
+    "choices": ["control", "data", "function", "io", "error"]
+  },
+  "nodes": {
+    "/control": { "type": "branch", "choices": ["loop", "branch"] },
+    "/control/loop": { "type": "branch", "choices": ["for", "while", "iterate"] },
+    "/control/loop/for": { "type": "leaf", "description": "for loop iterator" },
+    "/control/loop/while": { "type": "leaf", "description": "while conditional loop" },
+    "/control/loop/iterate": { "type": "leaf", "description": "range index loop" },
+    "/control/branch": { "type": "branch", "choices": ["if", "switch"] },
+    "/control/branch/if": { "type": "leaf", "description": "if-elif-else conditional" },
+    "/control/branch/switch": { "type": "leaf", "description": "switch-case branch" },
+    "/data": { "type": "branch", "choices": ["declare", "assign", "read", "write"] },
+    "/data/declare": { "type": "leaf", "description": "variable declaration" },
+    "/data/assign": { "type": "leaf", "description": "variable assignment" },
+    "/data/read": { "type": "leaf", "description": "variable or property read" },
+    "/data/write": { "type": "leaf", "description": "variable or property write" },
+    "/function": { "type": "branch", "choices": ["define", "call", "return"] },
+    "/function/define": { "type": "leaf", "description": "function definition" },
+    "/function/call": { "type": "leaf", "description": "function invocation" },
+    "/function/return": { "type": "leaf", "description": "return statement" },
+    "/io": { "type": "branch", "choices": ["input", "output"] },
+    "/io/input": { "type": "leaf", "description": "input operation" },
+    "/io/output": { "type": "leaf", "description": "output operation" },
+    "/error": { "type": "branch", "choices": ["try", "catch", "raise"] },
+    "/error/try": { "type": "leaf", "description": "try block" },
+    "/error/catch": { "type": "leaf", "description": "catch/except block" },
+    "/error/raise": { "type": "leaf", "description": "raise/throw error" }
+  }
+}

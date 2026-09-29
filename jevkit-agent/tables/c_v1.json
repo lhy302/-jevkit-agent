@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "table_id": "c_v1",
+  "target_language": "c",
+  "skeleton_ref": "common_skeleton_v1",
+  "semantic_mappings": {
+    "/semantic/function/define": "/c/function/define",
+    "/semantic/function/return": "/c/function/return",
+    "/semantic/control/branch/if": "/c/control/if",
+    "/semantic/control/branch/elif": "/c/control/elif",
+    "/semantic/control/branch/else": "/c/control/else",
+    "/semantic/control/loop/for": "/c/control/for",
+    "/semantic/control/loop/while": "/c/control/while",
+    "/semantic/control/loop/break": "/c/control/loop/break",
+    "/semantic/control/loop/continue": "/c/control/loop/continue",
+    "/semantic/data/declare": "/c/data/declare",
+    "/semantic/io/output": "/c/io/output"
+  },
+  "nodes": {
+    "/c/function/define": {
+      "type": "leaf",
+      "template": "{ret_type} {func_name}({typed_args}) {",
+      "spec_template": "定义 {func_name}({typed_args}) -> {ret_type}:",
+      "slots": ["func_name", "typed_args", "ret_type"],
+      "maps_from": ["/semantic/function/define"]
+    },
+    "/c/function/return": {
+      "type": "leaf",
+      "template": "return {expr};",
+      "spec_template": "返回 {expr}",
+      "slots": ["expr"],
+      "maps_from": ["/semantic/function/return"]
+    },
+    "/c/control/if": {
+      "type": "leaf",
+      "template": "if ({cond}) {",
+      "spec_template": "如果 {cond}:",
+      "slots": ["cond"],
+      "maps_from": ["/semantic/control/branch/if"]
+    },
+    "/c/control/elif": {
+      "type": "leaf",
+      "template": "} else if ({cond}) {",
+      "spec_template": "否则如果 {cond}:",
+      "slots": ["cond"],
+      "maps_from": ["/semantic/control/branch/elif"]
+    },
+    "/c/control/else": {
+      "type": "leaf",
+      "template": "} else {",
+      "spec_template": "否则:",
+      "slots": [],
+      "maps_from": ["/semantic/control/branch/else"]
+    },
+    "/c/control/loop/break": {
+      "type": "leaf",
+      "template": "break;",
+      "spec_template": "跳出",
+      "slots": [],
+      "maps_from": ["/semantic/control/loop/break"]
+    },
+    "/c/control/loop/continue": {
+      "type": "leaf",
+      "template": "continue;",
+      "spec_template": "继续",
+      "slots": [],
+      "maps_from": ["/semantic/control/loop/continue"]
+    },
+    "/c/data/declare": {
+      "type": "leaf",
+      "template": "{type} {var} = {expr};",
+      "spec_template": "设 {var} = {expr}",
+      "slots": ["type", "var", "expr"],
+      "maps_from": ["/semantic/data/declare"]
+    },
+    "/c/io/output": {
+      "type": "leaf",
+      "template": "printf(\"%s\\n\", {expr});",
+      "spec_template": "输出({expr})",
+      "slots": ["expr"],
+      "maps_from": ["/semantic/io/output"]
+    }
+  }
+}

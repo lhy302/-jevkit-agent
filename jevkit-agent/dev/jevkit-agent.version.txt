@@ -1,0 +1,32 @@
+# PyInstaller 版本资源：写进 exe 属性里，标识 JevKit Agent 正式发布版本
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(2, 0, 0, 0),
+        prodvers=(2, 0, 0, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    '080404B0',
+                    [
+                        StringStruct('CompanyName', 'JevKit Open Source'),
+                        StringStruct('FileDescription', 'JevKit Agent（双 API 架构与 JevAgent 三文件模型编程系统）'),
+                        StringStruct('FileVersion', '2.0.0.0'),
+                        StringStruct('InternalName', 'jevkit-agent'),
+                        StringStruct('OriginalFilename', 'jevkit-agent.exe'),
+                        StringStruct('ProductName', 'jevkit-agent'),
+                        StringStruct('ProductVersion', '2.0.0.0'),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct('Translation', [2052, 1200])]),
+    ],
+)

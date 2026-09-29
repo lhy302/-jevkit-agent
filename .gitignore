@@ -1,0 +1,69 @@
+# ==========================================
+# 1. 核心安全红线与本地运维备忘（绝不可推入仓库）
+# ==========================================
+/GitHub推送操作指南.md
+*.local.md
+*.local.ps1
+*.local.sh
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ==========================================
+# 2. 操作系统与编辑器临时文件
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ==========================================
+# 3. Python 运行时与编译产物
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+var/
+wheels/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# ==========================================
+# 4. 二进制可执行文件与压缩包（严禁入仓，由 Release 附件分发）
+# ==========================================
+*.exe
+*.dll
+*.dylib
+*.7z
+*.zip
+*.tar.gz
+*.rar
+jevkit-agent-diagnose.txt
+.jevkit-agent-write-test
+dsh-mini-diagnose.txt
+.dsh-mini-write-test
+sessions/
+.jev/cache/
+.jev/snapshots/
