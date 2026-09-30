@@ -36,3 +36,6 @@ jobs:
       working-directory: ./jevkit-agent
       run: |
         python dev/jevkit-agent.py --selftest
+
+    - name: Run DSL Literal Regression Tests
+      run: python jevkit-agent/dev/test-dsl-literals.py
