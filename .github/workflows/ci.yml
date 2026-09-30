@@ -32,10 +32,10 @@ jobs:
       run: |
         python jevkit-agent/dev/check-constants.py jevkit-agent/dev/jevkit-agent.py
 
+    - name: Run DSL Literal Regression Tests
+      run: python jevkit-agent/dev/test-dsl-literals.py
+
     - name: Run Full Offline Selftest (125 tests)
       working-directory: ./jevkit-agent
       run: |
         python dev/jevkit-agent.py --selftest
-
-    - name: Run DSL Literal Regression Tests
-      run: python jevkit-agent/dev/test-dsl-literals.py
