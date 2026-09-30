@@ -2781,20 +2781,98 @@ class SymbolTable(object):
         return final_defined, final_used
 
 
+def _map_dsl_code(text, transform, lang="python", state=None, comment_transform=None):
+    """仅转换字符串/注释外的文本；state 可跨行保留三引号和块注释状态。"""
+    state = state if state is not None else {}
+    prefix, suffix = BlockSplitter.get_syntax(lang)
+    line_comments = (prefix,) if not suffix else ()
+    block_comments = ((prefix, suffix),) if suffix else ()
+    if prefix == "//":
+        block_comments = (("/*", "*/"),)
+    parts, pos, size = [], 0, len(text)
+    while pos < size:
+        if state.get("quote"):
+            delimiter = state["quote"]
+            start = pos
+            if state.pop("opening", False):
+                pos += len(delimiter)
+            while pos < size:
+                if text[pos] == "\\":
+                    pos = min(size, pos + 2)
+                elif text.startswith(delimiter, pos):
+                    pos += len(delimiter)
+                    state.pop("quote", None)
+                    break
+                else:
+                    pos += 1
+            parts.append(text[start:pos])
+            continue
+        if state.get("comment"):
+            end = text.find(state["comment"], pos)
+            if end < 0:
+                parts.append(text[pos:])
+                break
+            end += len(state.pop("comment"))
+            parts.append(text[pos:end])
+            pos = end
+            continue
+        start = pos
+        while pos < size:
+            if text[pos] in ("'", '"', '`'):
+                break
+            if any(text.startswith(marker, pos) for marker in line_comments):
+                break
+            if any(text.startswith(marker, pos) for marker, _ in block_comments):
+                break
+            pos += 1
+        parts.append(transform(text[start:pos]))
+        if pos == size:
+            break
+        marker = next((marker for marker in line_comments if text.startswith(marker, pos)), None)
+        if marker:
+            end = text.find("\n", pos)
+            end = size if end < 0 else end
+            comment = text[pos:end]
+            parts.append(comment_transform(comment) if comment_transform else comment)
+            pos = end
+            continue
+        block_comment = next(((marker, end) for marker, end in block_comments
+                              if text.startswith(marker, pos)), None)
+        if block_comment:
+            marker, end = block_comment
+            parts.append(marker)
+            pos += len(marker)
+            state["comment"] = end
+            continue
+        delimiter = text[pos]
+        if delimiter in ("'", '"') and text.startswith(delimiter * 3, pos):
+            delimiter *= 3
+        state["quote"] = delimiter
+        state["opening"] = True
+    return "".join(parts)
+
+
+def _replace_dsl_literals(code, mapping):
+    for source, target in mapping.items():
+        code = re.sub(r'(?<![a-zA-Z0-9_\u4e00-\u9fa5])%s(?![a-zA-Z0-9_\u4e00-\u9fa5])'
+                      % re.escape(source), lambda match: target, code)
+    return code
+
+
+def _strip_dsl_node_comment(comment):
+    if re.fullmatch(r'(?:#|//|--)\s*node:[a-zA-Z0-9_\-/]+\s*', comment):
+        return ""
+    return comment
+
+
 class NormalizeDsl(object):
     """高层 DSL 描述规范化（设计稿第 15.5 节）。"""
 
     @classmethod
     def normalize_text(cls, text):
-        lines = (text or "").splitlines()
-        normalized_lines = []
-        for line in lines:
-            # 转换中文全角标点符号为标准符号
-            line = line.replace("（", "(").replace("）", ")").replace("：", ":").replace("，", ", ")
-            # 规范化连续空格
-            indent = line[:len(line) - len(line.lstrip())]
-            normalized_lines.append(indent + line.strip())
-        return "\n".join(normalized_lines)
+        def normalize_code(code):
+            return code.replace("（", "(").replace("）", ")").replace("：", ":").replace("，", ", ")
+        return _map_dsl_code(text or "", normalize_code)
 
 
 class ContextPacker(object):
@@ -3191,16 +3269,20 @@ class TemplateEngine(object):
     }
 
     @classmethod
-    def render_spec_line(cls, line, node_path, lang="python"):
+    def render_spec_line(cls, line, node_path, lang="python", lex_state=None):
+        state = lex_state if lex_state is not None else {}
+        was_literal = bool(state.get("quote") or state.get("comment"))
         indent = line[:len(line) - len(line.lstrip())]
         trimmed = line.strip()
-        if not trimmed or trimmed.startswith("#") or trimmed.startswith("//"):
+        if not was_literal and (not trimmed or trimmed.startswith("#") or trimmed.startswith("//")):
             return line
 
         lmap = cls.LITERAL_MAP.get(lang, cls.LITERAL_MAP["python"])
-        res = trimmed
-        for k, v in lmap.items():
-            res = re.sub(r'(?<![a-zA-Z0-9_\u4e00-\u9fa5])%s(?![a-zA-Z0-9_\u4e00-\u9fa5])' % k, v, res)
+        res = _map_dsl_code(line, lambda code: _replace_dsl_literals(code, lmap),
+                            lang, state)
+        if was_literal or state.get("quote") or state.get("comment"):
+            return res
+        res = res[len(indent):].rstrip()
 
         comment_sym, _ = BlockSplitter.get_syntax(lang)
         if node_path:
@@ -3208,30 +3290,36 @@ class TemplateEngine(object):
         return "%s%s" % (indent, res)
 
     @classmethod
-    def render_code_line(cls, line, lang="python"):
+    def render_code_line(cls, line, lang="python", lex_state=None):
+        state = lex_state if lex_state is not None else {}
+        was_literal = bool(state.get("quote") or state.get("comment"))
         indent = line[:len(line) - len(line.lstrip())]
         trimmed = line.strip()
-        if not trimmed or trimmed.startswith("#") or trimmed.startswith("//"):
+        if not was_literal and (not trimmed or trimmed.startswith("#") or trimmed.startswith("//")):
             return line
 
-        clean = re.sub(r'\s*(?:#|//|--)\s*node:[a-zA-Z0-9_\-/]+\s*$', '', trimmed).rstrip()
         lmap = cls.LITERAL_MAP.get(lang, cls.LITERAL_MAP["python"])
-        for k, v in lmap.items():
-            clean = re.sub(r'(?<![a-zA-Z0-9_\u4e00-\u9fa5])%s(?![a-zA-Z0-9_\u4e00-\u9fa5])' % k, v, clean)
+        clean = _map_dsl_code(line, lambda code: _replace_dsl_literals(code, lmap),
+                              lang, state, _strip_dsl_node_comment)
+        if was_literal:
+            return clean
+        clean = clean[len(indent):]
+        if not state.get("quote") and not state.get("comment"):
+            clean = clean.rstrip()
 
         if lang == "python":
             if clean.startswith("定义 "):
-                return "%sdef %s" % (indent, clean[3:].strip())
+                return "%sdef %s" % (indent, clean[3:].lstrip())
             elif clean.startswith("如果 "):
-                return "%sif %s" % (indent, clean[3:].strip())
+                return "%sif %s" % (indent, clean[3:].lstrip())
             elif clean.startswith("否则如果 "):
-                return "%selif %s" % (indent, clean[5:].strip())
+                return "%selif %s" % (indent, clean[5:].lstrip())
             elif clean.startswith("否则:"):
                 return "%selse:" % indent
             elif clean.startswith("返回"):
-                return "%sreturn %s" % (indent, clean[2:].strip())
+                return "%sreturn %s" % (indent, clean[2:].lstrip())
             elif clean.startswith("当 "):
-                return "%swhile %s" % (indent, clean[2:].strip())
+                return "%swhile %s" % (indent, clean[2:].lstrip())
             elif clean.startswith("对于 ") and " 中的 " in clean:
                 m = re.match(r'对于\s+(.+?)\s+中的\s+(.+?):', clean)
                 if m:
@@ -3239,7 +3327,7 @@ class TemplateEngine(object):
             elif clean.startswith("输出("):
                 return "%sprint(%s" % (indent, clean[3:])
             elif clean.startswith("设 "):
-                return "%s%s" % (indent, clean[2:].strip())
+                return "%s%s" % (indent, clean[2:].lstrip())
             elif clean == "跳出":
                 return "%sbreak" % indent
             elif clean == "继续":
@@ -3347,21 +3435,28 @@ class TemplateEngine(object):
                 return "%s继续    %s node:/%s/control/loop/continue" % (indent, comment_sym, lang)
 
     @classmethod
-    def reverse_to_high(cls, line, lang="python"):
+    def reverse_to_high(cls, line, lang="python", lex_state=None):
+        state = lex_state if lex_state is not None else {}
+        was_literal = bool(state.get("quote") or state.get("comment"))
         indent = line[:len(line) - len(line.lstrip())]
         trimmed = line.strip()
-        if not trimmed or trimmed.startswith("#") or trimmed.startswith("//"):
+        if not was_literal and (not trimmed or trimmed.startswith("#") or trimmed.startswith("//")):
             if "spec:" in trimmed or "from:" in trimmed:
                 return None
             return line
 
-        clean = re.sub(r'\s*(?:#|//|--)\s*node:[a-zA-Z0-9_\-/]+\s*$', '', trimmed).rstrip()
-        for en, cn in cls.REV_LITERAL_MAP.items():
-            clean = re.sub(r'(?<![a-zA-Z0-9_\u4e00-\u9fa5])%s(?![a-zA-Z0-9_\u4e00-\u9fa5])' % en, cn, clean)
-
-        if clean.startswith("定义 "):
-            clean = re.sub(r':\s*[a-zA-Z0-9_\[\],\*\s]+', '', clean)
-            clean = re.sub(r'\s*->\s*[a-zA-Z0-9_\[\],\*\s]+', '', clean)
+        def reverse_code(code):
+            code = _replace_dsl_literals(code, cls.REV_LITERAL_MAP)
+            if not was_literal and trimmed.startswith("定义 "):
+                code = re.sub(r':\s*[a-zA-Z0-9_\[\],\*\s]+', '', code)
+                code = re.sub(r'\s*->\s*[a-zA-Z0-9_\[\],\*\s]+', '', code)
+            return code
+        clean = _map_dsl_code(line, reverse_code, lang, state, _strip_dsl_node_comment)
+        if was_literal:
+            return clean
+        clean = clean[len(indent):]
+        if not state.get("quote") and not state.get("comment"):
+            clean = clean.rstrip()
 
         return "%s%s" % (indent, clean)
 
@@ -3674,10 +3769,11 @@ def jev_high_to_spec(module_path, target_lang="python", table_ref=None, config=N
         symbols_map[blk.block_id] = (sym_def, sym_use)
 
         new_spec_lines.append(BlockSplitter.format_marker(blk.block_id, "begin", lang=norm_lang))
+        lex_state = {}
         for line in blk.content.splitlines():
             # 由 RouterEngine 在路由树中寻址，并由 JevClient 做 Choice / Noul 抉择
             node_path, _ = router.route_spec_node(line, lang=norm_lang, context=blk.block_id, jev_client=client)
-            s_line = TemplateEngine.render_spec_line(line, node_path, lang=norm_lang)
+            s_line = TemplateEngine.render_spec_line(line, node_path, lang=norm_lang, lex_state=lex_state)
             new_spec_lines.append(s_line)
         new_spec_lines.append(BlockSplitter.format_marker(blk.block_id, "end", lang=norm_lang))
         new_spec_lines.append("")
@@ -3730,8 +3826,9 @@ def jev_spec_to_code(module_path, target_lang="python", table_ref=None, config=N
 
         code_lines.append(BlockSplitter.format_marker(blk.block_id, "begin", lang=norm_lang))
         blk_code_lines = []
+        lex_state = {}
         for line in blk.content.splitlines():
-            c_line = TemplateEngine.render_code_line(line, lang=norm_lang)
+            c_line = TemplateEngine.render_code_line(line, lang=norm_lang, lex_state=lex_state)
             blk_code_lines.append(c_line)
 
         # 打磨项 3：C/C++/JS/TS 大括号作用域自动闭合补全
@@ -3844,8 +3941,9 @@ def jev_spec_to_high(module_path, target_lang="python", table_ref=None, config=N
         symbols_map[blk.block_id] = (sym_def, sym_use)
 
         high_lines.append(BlockSplitter.format_marker(blk.block_id, "begin", lang="python", is_high=True))
+        lex_state = {}
         for line in blk.content.splitlines():
-            h_line = TemplateEngine.reverse_to_high(line, lang=norm_lang)
+            h_line = TemplateEngine.reverse_to_high(line, lang=norm_lang, lex_state=lex_state)
             if h_line is not None:
                 high_lines.append(h_line)
         high_lines.append(BlockSplitter.format_marker(blk.block_id, "end", lang="python", is_high=True))
@@ -3912,16 +4010,17 @@ def jev_translate_block(block_id, direction, module_path, target_lang="python",
         raw_content = str(block_content)
 
     translated_lines = []
+    lex_state = {}
     for line in raw_content.splitlines():
         if direction == "high_to_spec":
             node_path, _ = router.route_spec_node(line, lang=dst_lang, context=block_id, jev_client=client)
-            translated_lines.append(TemplateEngine.render_spec_line(line, node_path, lang=dst_lang))
+            translated_lines.append(TemplateEngine.render_spec_line(line, node_path, lang=dst_lang, lex_state=lex_state))
         elif direction == "spec_to_code":
-            translated_lines.append(TemplateEngine.render_code_line(line, lang=dst_lang))
+            translated_lines.append(TemplateEngine.render_code_line(line, lang=dst_lang, lex_state=lex_state))
         elif direction == "code_to_spec":
             translated_lines.append(TemplateEngine.reverse_to_spec(line, lang=dst_lang))
         elif direction == "spec_to_high":
-            hl = TemplateEngine.reverse_to_high(line, lang=src_lang)
+            hl = TemplateEngine.reverse_to_high(line, lang=src_lang, lex_state=lex_state)
             if hl is not None:
                 translated_lines.append(hl)
 
