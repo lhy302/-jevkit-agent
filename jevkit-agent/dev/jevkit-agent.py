@@ -3449,6 +3449,7 @@ class ThreeFileManager(object):
         index_path = paths["index_file"]
         module_name = paths["module_name"]
         lang = paths["target_lang"]
+        os.makedirs(paths["module_dir"], exist_ok=True)
 
         data = {"module": module_name, "blocks": [], "history": []}
         if os.path.isfile(index_path):
@@ -3505,24 +3506,6 @@ class ThreeFileManager(object):
         data["module"] = module_name
         data["blocks"] = list(existing_by_id.values())
 
-        # 保存历史快照以支持 rollback
-        snapshot = {
-            "timestamp": time.time(),
-            "status": status,
-            "blocks": copy.deepcopy(data["blocks"])
-        }
-        if "history" not in data:
-            data["history"] = []
-        data["history"].append(snapshot)
-        if len(data["history"]) > 10:
-            data["history"] = data["history"][-10:]
-
-        if not os.path.isdir(os.path.dirname(index_path)):
-            os.makedirs(os.path.dirname(index_path))
-        with open(index_path, "w", encoding="utf-8") as h:
-            json.dump(data, h, ensure_ascii=False, indent=2)
-            h.write("\n")
-
         # 维护 manifest.json（支持多语言多特化增量合并）
         manifest_path = paths["manifest_file"]
         manifest_data = {
@@ -3549,12 +3532,102 @@ class ThreeFileManager(object):
             manifest_data["mappings"] = {}
         manifest_data["tables"][lang] = "%s_v3" % lang if lang == "python" else "%s_v1" % lang
         manifest_data["mappings"][lang] = "%s_semantic" % lang
-        try:
-            with open(manifest_path, "w", encoding="utf-8") as h:
-                json.dump(manifest_data, h, ensure_ascii=False, indent=2)
-                h.write("\n")
-        except Exception:
-            pass
+        # 保存真实三文件快照；历史按模块隔离，不能只保存索引后声称代码可回滚。
+        snapshot = _jev_snapshot(paths, data["blocks"], status)
+        history = list(data.get("history") or [])
+        history.append(snapshot)
+        module_history = [s for s in history if s.get("module") == module_name]
+        retained = {id(s) for s in module_history[-10:]}
+        data["history"] = [s for s in history if s.get("module") != module_name or id(s) in retained]
+        _jev_restore_files({
+            manifest_path: (json.dumps(manifest_data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+            index_path: (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        })
+
+
+def _jev_module_blocks(blocks, module_name):
+    high_name = module_name + ".high.dsl"
+    return [b for b in blocks if b.get("files", {}).get("high") == high_name]
+
+
+def _jev_snapshot(paths, blocks, status):
+    module_blocks = _jev_module_blocks(blocks, paths["module_name"])
+    names = {os.path.basename(paths[k]) for k in ("high_dsl", "spec_dsl", "code_file")}
+    for entry in module_blocks:
+        for kind in ("spec", "code"):
+            names.update(entry.get("files", {}).get(kind, {}).values())
+    files = {}
+    for name in sorted(names):
+        path = _jev_snapshot_path(paths, name)
+        if os.path.isfile(path):
+            with open(path, "rb") as h:
+                files[name] = base64.b64encode(h.read()).decode("ascii")
+        else:
+            files[name] = None  # 文件不存在也是确认点状态，回滚时需删除后来产生的文件。
+    return {"timestamp": time.time(), "module": paths["module_name"], "status": status,
+            "blocks": copy.deepcopy(module_blocks), "files": files}
+
+
+def _jev_snapshot_path(paths, name):
+    if (not isinstance(name, str) or not name or os.path.basename(name) != name
+            or "/" in name or "\\" in name or not name.startswith(paths["module_name"] + ".")):
+        raise JevBlockError("无效的回滚快照文件名: %r" % (name,))
+    return os.path.join(paths["module_dir"], name)
+
+
+def _jev_restore_files(updates):
+    """先暂存全部写入，再逐文件原子替换；失败时恢复已替换文件（非多文件原子事务）。"""
+    staged, backups, applied = {}, {}, []
+
+    def stage(path, content):
+        fd, tmp = tempfile.mkstemp(prefix=".jev-rollback-", dir=os.path.dirname(path))
+        staged_paths.append(tmp)
+        with os.fdopen(fd, "wb") as h:
+            h.write(content)
+            h.flush()
+            os.fsync(h.fileno())
+        if os.path.exists(path):
+            os.chmod(tmp, os.stat(path).st_mode & 0o777)
+        return tmp
+
+    staged_paths = []
+    try:
+        for path, content in updates.items():
+            if os.path.exists(path):
+                with open(path, "rb") as h:
+                    backups[path] = stage(path, h.read())
+            else:
+                backups[path] = None
+            staged[path] = stage(path, content) if content is not None else None
+        for path, tmp in staged.items():
+            if tmp is not None:
+                os.replace(tmp, path)
+            elif os.path.exists(path):
+                os.remove(path)
+            applied.append(path)
+    except Exception:
+        for path in reversed(applied):
+            if backups[path] is not None:
+                os.replace(backups[path], path)
+            elif os.path.exists(path):
+                os.remove(path)
+        raise
+    finally:
+        for tmp in staged_paths:
+            _remove_quietly(tmp)
+
+
+def _jev_block_span(raw, block_id, lang, is_high=False):
+    """返回包含标记的原始字节范围，避免局部回滚改写其他块的换行或 BOM。"""
+    text = raw.decode("utf-8-sig")
+    blocks = BlockSplitter.split(text, lang=lang, is_high=is_high)
+    block = next((b for b in blocks if b.block_id == block_id), None)
+    if block is None:
+        return None
+    lines = text.splitlines(True)
+    bom_size = 3 if raw.startswith(b"\xef\xbb\xbf") else 0
+    return (bom_size + len("".join(lines[:block.start_line - 1]).encode("utf-8")),
+            bom_size + len("".join(lines[:block.end_line]).encode("utf-8")))
 
 
 # =============================================================================
@@ -3898,26 +3971,90 @@ def jev_rollback(module_path, block_id=None, config=None):
         data = json.load(h)
 
     history = data.get("history") or []
-    if len(history) < 2:
-        return {
-            "status": "noop",
-            "message": "暂无上一确认点历史快照，无需回滚。"
-        }
+    module_name = paths["module_name"]
+    module_history = [(i, s) for i, s in enumerate(history) if s.get("module") == module_name]
+    if not module_history and history and data.get("module") == module_name:
+        raise JevBlockError("旧历史快照只有索引元数据，没有三文件内容，无法真实回滚。请先建立新的确认点。")
+    confirmed = [(i, s) for i, s in module_history if s.get("status") == "confirmed"]
+    # 已确认的当前快照需要退一步；草稿/翻译中的状态则恢复最近确认点。
+    if module_history and module_history[-1][1].get("status") == "confirmed":
+        confirmed = confirmed[:-1]
+    if not confirmed:
+        return {"status": "noop", "message": "暂无上一确认点历史快照，无需回滚。"}
+    previous_index, prev_snapshot = confirmed[-1]
+    if not isinstance(prev_snapshot.get("files"), dict):
+        raise JevBlockError("确认点缺少三文件内容，无法真实回滚。")
 
-    # 恢复上一快照
-    prev_snapshot = history[-2]
-    data["blocks"] = prev_snapshot["blocks"]
-    data["history"] = history[:-1]  # 弹出当前快照
+    current_blocks = _jev_module_blocks(data.get("blocks", []), module_name)
+    previous_blocks = prev_snapshot.get("blocks") or []
+    names = set(prev_snapshot["files"])
+    for _, snap in module_history:
+        names.update((snap.get("files") or {}).keys())
+    updates = {}
+    for name in sorted(names):
+        path = _jev_snapshot_path(paths, name)
+        encoded = prev_snapshot["files"].get(name)
+        desired = base64.b64decode(encoded, validate=True) if encoded is not None else None
+        if block_id is not None:
+            if not os.path.isfile(path):
+                if desired is not None:
+                    raise JevBlockError("局部回滚要求目标文件存在: %s" % path)
+                continue
+            with open(path, "rb") as h:
+                current = h.read()
+            lang = "python" if name.endswith(".high.dsl") else (
+                name.split(".spec.", 1)[1][:-4] if ".spec." in name else
+                next((k for k, ext in ThreeFileManager.LANG_EXT.items() if name.endswith(ext)), "python"))
+            is_high = name.endswith(".high.dsl")
+            old_span = _jev_block_span(current, block_id, lang, is_high)
+            new_span = _jev_block_span(desired, block_id, lang, is_high) if desired is not None else None
+            if old_span is None:
+                if new_span is not None:
+                    raise JevBlockError("局部回滚无法定位目标块 %s: %s" % (block_id, path))
+                continue
+            restored = desired[new_span[0]:new_span[1]] if new_span is not None else b""
+            desired = current[:old_span[0]] + restored + current[old_span[1]:]
+        updates[path] = desired
 
-    with open(index_path, "w", encoding="utf-8") as h:
-        json.dump(data, h, ensure_ascii=False, indent=2)
-        h.write("\n")
+    other_blocks = [b for b in data.get("blocks", []) if b not in current_blocks]
+    if block_id is None:
+        restored_blocks = copy.deepcopy(previous_blocks)
+    else:
+        if not any(b.get("block_id") == block_id for b in current_blocks + previous_blocks):
+            raise JevBlockError("确认点中未找到块: %s" % block_id)
+        restored_blocks = [b for b in current_blocks if b.get("block_id") != block_id]
+        restored_blocks.extend(copy.deepcopy([b for b in previous_blocks if b.get("block_id") == block_id]))
+    data["blocks"] = other_blocks + restored_blocks
+    data["history"] = [s for i, s in enumerate(history)
+                       if s.get("module") != module_name or i <= previous_index]
+    if block_id is not None:
+        # 退回目标块时保留其他块的当前状态，随后生成的确认点以此为基线。
+        merged = copy.deepcopy(prev_snapshot)
+        merged["blocks"] = copy.deepcopy(restored_blocks)
+        merged["files"] = {}
+        for name in sorted(names):
+            path = _jev_snapshot_path(paths, name)
+            if path in updates:
+                content = updates[path]
+            elif os.path.isfile(path):
+                with open(path, "rb") as h:
+                    content = h.read()
+            else:
+                content = None
+            merged["files"][name] = base64.b64encode(content).decode("ascii") if content is not None else None
+        data["history"][previous_index] = merged
+    # 索引最后提交；任何替换失败会恢复已改动文件，避免代码/索引处于不同版本。
+    updates[index_path] = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    _jev_restore_files(updates)
 
     return {
         "status": "success",
         "action": "rollback",
+        "module": module_name,
+        "block_id": block_id,
         "restored_snapshot_time": prev_snapshot.get("timestamp"),
-        "blocks_count": len(data["blocks"])
+        "blocks_count": len(restored_blocks),
+        "files_restored": [os.path.basename(p) for p in updates if p != index_path],
     }
 
 
@@ -5930,6 +6067,10 @@ def run_selftest():
         check("确认点版本向量真实记录（version_vector 非空）", bool(b0.get("version_vector")), str(b0))
 
         # 7. 修改流程：translate_block 局部替换
+        confirmed_file_bytes = {}
+        for checkpoint_file in (high_path, spec_path, code_path):
+            with open(checkpoint_file, "rb") as h:
+                confirmed_file_bytes[checkpoint_file] = h.read()
         new_high_block_content = "    如果 用户名 == \"admin\":\n        返回 真\n    返回 假"
         tb_res = jev_translate_block("auth_001", "high_to_spec", high_path, target_lang="python",
                                      block_content=new_high_block_content, config=dual_cfg)
@@ -5941,7 +6082,12 @@ def run_selftest():
 
         # 8. 确认点回滚自检：rollback
         rb_res = jev_rollback(high_path, config=dual_cfg)
-        check("确认点回滚：rollback 成功恢复快照", rb_res.get("status") == "success", str(rb_res))
+        restored_file_bytes = {}
+        for checkpoint_file in confirmed_file_bytes:
+            with open(checkpoint_file, "rb") as h:
+                restored_file_bytes[checkpoint_file] = h.read()
+        check("确认点回滚：rollback 恢复真实三文件字节",
+              rb_res.get("status") == "success" and restored_file_bytes == confirmed_file_bytes, str(rb_res))
 
         # 9. 相对路径 CWD 解析自检（修复 CWD 透传缺陷）
         cwd_test_cfg = dict(dual_cfg)

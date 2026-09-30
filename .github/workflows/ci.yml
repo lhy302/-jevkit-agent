@@ -36,3 +36,6 @@ jobs:
       working-directory: ./jevkit-agent
       run: |
         python dev/jevkit-agent.py --selftest
+
+    - name: Run Rollback Regression Tests
+      run: python jevkit-agent/dev/test-rollback.py
